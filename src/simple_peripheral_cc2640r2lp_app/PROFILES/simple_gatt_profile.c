@@ -64,7 +64,7 @@
  * CONSTANTS
  */
 
-#define SERVAPP_NUM_ATTR_SUPPORTED        17
+#define SERVAPP_NUM_ATTR_SUPPORTED        19
 
 /*********************************************************************
  * TYPEDEFS
@@ -132,20 +132,32 @@ static CONST gattAttrType_t simpleProfileService = { ATT_BT_UUID_SIZE, simplePro
 
 
 // Simple Profile Characteristic 1 Properties
-static uint8 simpleProfileChar1Props = GATT_PROP_READ | GATT_PROP_WRITE;
+static uint8 simpleProfileChar1Props = GATT_PROP_READ | GATT_PROP_WRITE | GATT_PROP_NOTIFY;
 
 // Characteristic 1 Value
 static uint8 simpleProfileChar1 = 0;
+
+// Simple Profile Characteristic 1 Configuration Each client has its own
+// instantiation of the Client Characteristic Configuration. Reads of the
+// Client Characteristic Configuration only shows the configuration for
+// that client and writes only affect the configuration of that client.
+static gattCharCfg_t *simpleProfileChar1Config;
 
 // Simple Profile Characteristic 1 User Description
 static uint8 simpleProfileChar1UserDesp[17] = "Characteristic 1";
 
 
 // Simple Profile Characteristic 2 Properties
-static uint8 simpleProfileChar2Props = GATT_PROP_READ;
+static uint8 simpleProfileChar2Props = GATT_PROP_READ | GATT_PROP_NOTIFY;
 
 // Characteristic 2 Value
 static uint8 simpleProfileChar2 = 0;
+
+// Simple Profile Characteristic 2 Configuration Each client has its own
+// instantiation of the Client Characteristic Configuration. Reads of the
+// Client Characteristic Configuration only shows the configuration for
+// that client and writes only affect the configuration of that client.
+static gattCharCfg_t *simpleProfileChar2Config;
 
 // Simple Profile Characteristic 2 User Description
 static uint8 simpleProfileChar2UserDesp[17] = "Characteristic 2";
@@ -216,6 +228,14 @@ static gattAttribute_t simpleProfileAttrTbl[SERVAPP_NUM_ATTR_SUPPORTED] =
         &simpleProfileChar1
       },
 
+      // Characteristic 1 configuration
+      {
+        { ATT_BT_UUID_SIZE, clientCharCfgUUID },
+        GATT_PERMIT_READ | GATT_PERMIT_WRITE,
+        0,
+        (uint8 *)&simpleProfileChar1Config
+      },
+
       // Characteristic 1 User Description
       {
         { ATT_BT_UUID_SIZE, charUserDescUUID },
@@ -238,6 +258,14 @@ static gattAttribute_t simpleProfileAttrTbl[SERVAPP_NUM_ATTR_SUPPORTED] =
         GATT_PERMIT_READ,
         0,
         &simpleProfileChar2
+      },
+
+      // Characteristic 2 configuration
+      {
+        { ATT_BT_UUID_SIZE, clientCharCfgUUID },
+        GATT_PERMIT_READ | GATT_PERMIT_WRITE,
+        0,
+        (uint8 *)&simpleProfileChar2Config
       },
 
       // Characteristic 2 User Description
@@ -388,8 +416,24 @@ bStatus_t SimpleProfile_AddService( uint32 services )
     return ( bleMemAllocError );
   }
 
+  simpleProfileChar1Config = (gattCharCfg_t *)ICall_malloc( sizeof(gattCharCfg_t) *
+                                                            linkDBNumConns );
+  if ( simpleProfileChar1Config == NULL )
+  {
+    return ( bleMemAllocError );
+  }
+
+  simpleProfileChar2Config = (gattCharCfg_t *)ICall_malloc( sizeof(gattCharCfg_t) *
+                                                            linkDBNumConns );
+  if ( simpleProfileChar2Config == NULL )
+  {
+    return ( bleMemAllocError );
+  }
+
   // Initialize Client Characteristic Configuration attributes
   GATTServApp_InitCharCfg( INVALID_CONNHANDLE, simpleProfileChar4Config );
+  GATTServApp_InitCharCfg( INVALID_CONNHANDLE, simpleProfileChar1Config );
+  GATTServApp_InitCharCfg( INVALID_CONNHANDLE, simpleProfileChar2Config );
 
   if ( services & SIMPLEPROFILE_SERVICE )
   {
@@ -454,6 +498,11 @@ bStatus_t SimpleProfile_SetParameter( uint8 param, uint8 len, void *value )
       if ( len == sizeof ( uint8 ) )
       {
         simpleProfileChar1 = *((uint8*)value);
+
+        // See if Notification has been enabled
+        GATTServApp_ProcessCharCfg( simpleProfileChar1Config, &simpleProfileChar1, FALSE,
+                                    simpleProfileAttrTbl, GATT_NUM_ATTRS( simpleProfileAttrTbl ),
+                                    INVALID_TASK_ID, simpleProfile_ReadAttrCB );
       }
       else
       {
@@ -465,6 +514,11 @@ bStatus_t SimpleProfile_SetParameter( uint8 param, uint8 len, void *value )
       if ( len == sizeof ( uint8 ) )
       {
         simpleProfileChar2 = *((uint8*)value);
+
+        // See if Notification has been enabled
+        GATTServApp_ProcessCharCfg( simpleProfileChar2Config, &simpleProfileChar2, FALSE,
+                                    simpleProfileAttrTbl, GATT_NUM_ATTRS( simpleProfileAttrTbl ),
+                                    INVALID_TASK_ID, simpleProfile_ReadAttrCB );
       }
       else
       {
