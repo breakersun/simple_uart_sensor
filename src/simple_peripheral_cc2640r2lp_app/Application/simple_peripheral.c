@@ -55,6 +55,8 @@
 #include <ti/sysbios/knl/Event.h>
 #include <ti/sysbios/knl/Queue.h>
 #include <ti/display/Display.h>
+#include <ti/drivers/UART.h>
+#include <ti/drivers/uart/UARTCC26XX.h>
 
 #if defined( USE_FPGA ) || defined( DEBUG_SW_TRACE )
 #include <driverlib/ioc.h>
@@ -147,6 +149,7 @@
 #define SBP_PAIRING_STATE_EVT                 0x0004
 #define SBP_PASSCODE_NEEDED_EVT               0x0008
 #define SBP_CONN_EVT                          0x0010
+#define SSSS_OUTGOING_DATA                    0x0020
 
 // Internal Events for RTOS application
 #define SBP_ICALL_EVT                         ICALL_MSG_EVENT_ID // Event_Id_31
@@ -168,6 +171,10 @@
 // Gets whether the RegisterCause was registered to recieve connection event
 #define CONNECTION_EVENT_REGISTRATION_CAUSE(RegisterCause) (connectionEventRegisterCauseBitMap & RegisterCause )
 
+
+//  UART read buffer size
+#define UART_MAX_READ_SIZE    (256)
+
 /*********************************************************************
  * TYPEDEFS
  */
@@ -177,7 +184,17 @@ typedef struct
 {
   appEvtHdr_t hdr;  // event header.
   uint8_t *pData;  // event data
+  uint16_t   arg0;    // Generic argument
 } sbpEvt_t;
+
+// UART msg list element
+typedef struct
+{
+  List_Elem elem;
+  uint8_t len;
+  uint8_t buffer[];
+} uartMsg_t;
+
 
 /*********************************************************************
  * GLOBAL VARIABLES
@@ -270,11 +287,24 @@ static uint8_t advertData[] =
 // GAP GATT Attributes
 static uint8_t attDeviceName[GAP_DEVICE_NAME_LEN] = "Simple Peripheral";
 
+// UART Interface
+static UART_Handle uartHandle = NULL;
+
+// UART read buffer
+static uint8_t uartReadBuffer[UART_MAX_READ_SIZE] = {0};
+
+// UART write list
+static List_List  uartWriteList;
+static uartMsg_t* uartCurrentMsg;
+static uint8_t    uartWriteActive = 0;
 
 /*********************************************************************
  * LOCAL FUNCTIONS
  */
 
+static void uartReadCallback(UART_Handle handle, void *rxBuf, size_t size);
+static void uartWriteCallback(UART_Handle handle, void *rxBuf, size_t size);
+static void SimplePeripheral_Hwinit(void);
 static void SimplePeripheral_init( void );
 static void SimplePeripheral_taskFxn(UArg a0, UArg a1);
 
@@ -296,7 +326,7 @@ static void SimplePeripheral_processPasscode(uint8_t uiOutputs);
 static void SimplePeripheral_stateChangeCB(gaprole_States_t newState);
 static void SimplePeripheral_charValueChangeCB(uint8_t paramID);
 static uint8_t SimplePeripheral_enqueueMsg(uint8_t event, uint8_t state,
-                                              uint8_t *pData);
+                                              uint8_t *pData, uint16_t arg0);
 
 static void SimplePeripheral_connEvtCB(Gap_ConnEventRpt_t *pReport);
 static void SimplePeripheral_processConnEvt(Gap_ConnEventRpt_t *pReport);
@@ -427,6 +457,86 @@ void SimplePeripheral_createTask(void)
 }
 
 /*********************************************************************
+ * @fn      uartReadCallback
+ *
+ * @brief   UART read callback, notify the application it needs to handle the data
+ *
+ * @param   handle  - UART handle
+ *          *rxBuf  - buffer containing the incoming data.
+ *          size    - length of the data buffer.
+ *
+ * @return  None.
+ */
+static void uartReadCallback(UART_Handle handle, void *rxBuf, size_t size)
+{
+    // Pass the number of read bytes using the arg0 field
+    SimplePeripheral_enqueueMsg(SSSS_OUTGOING_DATA, NULL, NULL, size);
+}
+
+/*********************************************************************
+ * @fn      uartWriteCallback
+ *
+ * @brief   UART write callback, perform additional writes if the UART msg
+ *          list is not empty
+ *
+ * @param   handle  - UART handle
+ *          *txBuf  - buffer containing the written data.
+ *          size    - length of the data buffer written.
+ *
+ * @return  None.
+ */
+static void uartWriteCallback(UART_Handle handle, void *txBuf, size_t size)
+{
+    // Free the last printed buffer
+    if (NULL != uartCurrentMsg)
+    {
+        ICall_free(uartCurrentMsg);
+        uartCurrentMsg = NULL;
+    }
+
+    // If the list is not empty, start another write
+    if (!List_empty(&uartWriteList)) {
+        uartCurrentMsg = (uartMsg_t *) List_get(&uartWriteList);
+        UART_write(uartHandle, uartCurrentMsg->buffer, uartCurrentMsg->len);
+    }
+    else
+    {
+        uartWriteActive = 0;
+    }
+}
+
+static void SimplePeripheral_Hwinit(void)
+{
+    // Initialize UART
+    UART_Params uartParams;
+    UART_init();
+
+    // Open UART in callback mode for both read and write
+    UART_Params_init(&uartParams);
+    uartParams.writeDataMode  = UART_DATA_BINARY;
+    uartParams.readDataMode   = UART_DATA_BINARY;
+    uartParams.readReturnMode = UART_RETURN_FULL;
+    uartParams.readMode       = UART_MODE_CALLBACK;
+    uartParams.writeMode      = UART_MODE_CALLBACK;
+    uartParams.readCallback   = uartReadCallback;
+    uartParams.writeCallback  = uartWriteCallback;
+    uartParams.readEcho       = UART_ECHO_OFF;
+    uartParams.baudRate       = 115200;
+
+    uartHandle = UART_open(Board_UART0, &uartParams);
+
+    if (uartHandle == NULL) {
+      // UART_open() failed
+      while (1);
+    }
+
+    UART_control(uartHandle, UARTCC26XX_CMD_RETURN_PARTIAL_ENABLE, NULL);
+
+    // Setup an initial read
+    UART_read(uartHandle, uartReadBuffer, UART_MAX_READ_SIZE);
+}
+
+/*********************************************************************
  * @fn      SimplePeripheral_init
  *
  * @brief   Called during initialization and contains application
@@ -471,6 +581,8 @@ static void SimplePeripheral_init(void)
 
   // Create an RTOS queue for message from profile to be sent to app.
   appMsgQueue = Util_constructQueue(&appMsg);
+
+  SimplePeripheral_Hwinit();
 
   // Create one-shot clocks for internal periodic events.
   Util_constructClock(&periodicClock, SimplePeripheral_clockHandler,
@@ -941,6 +1053,11 @@ static void SimplePeripheral_processAppMsg(sbpEvt_t *pMsg)
         break;
 	  }
 
+	case SSSS_OUTGOING_DATA:
+	    // Start another read
+	    UART_read(uartHandle, uartReadBuffer, UART_MAX_READ_SIZE);
+	    break;
+
     default:
       // Do nothing.
       break;
@@ -958,7 +1075,7 @@ static void SimplePeripheral_processAppMsg(sbpEvt_t *pMsg)
  */
 static void SimplePeripheral_stateChangeCB(gaprole_States_t newState)
 {
-  SimplePeripheral_enqueueMsg(SBP_STATE_CHANGE_EVT, newState, NULL);
+  SimplePeripheral_enqueueMsg(SBP_STATE_CHANGE_EVT, newState, NULL, NULL);
 }
 
 /*********************************************************************
@@ -1139,7 +1256,7 @@ static void SimplePeripheral_processStateChangeEvt(gaprole_States_t newState)
  */
 static void SimplePeripheral_charValueChangeCB(uint8_t paramID)
 {
-  SimplePeripheral_enqueueMsg(SBP_CHAR_CHANGE_EVT, paramID, 0);
+  SimplePeripheral_enqueueMsg(SBP_CHAR_CHANGE_EVT, paramID, 0, NULL);
 }
 
 /*********************************************************************
@@ -1223,7 +1340,7 @@ static void SimplePeripheral_pairStateCB(uint16_t connHandle, uint8_t state,
     *pData = status;
 
     // Queue the event.
-    SimplePeripheral_enqueueMsg(SBP_PAIRING_STATE_EVT, state, pData);
+    SimplePeripheral_enqueueMsg(SBP_PAIRING_STATE_EVT, state, pData, NULL);
   }
 }
 
@@ -1289,7 +1406,7 @@ static void SimplePeripheral_passcodeCB(uint8_t *deviceAddr, uint16_t connHandle
     *pData = uiOutputs;
 
     // Enqueue the event.
-    SimplePeripheral_enqueueMsg(SBP_PASSCODE_NEEDED_EVT, 0, pData);
+    SimplePeripheral_enqueueMsg(SBP_PASSCODE_NEEDED_EVT, 0, pData, NULL);
   }
 }
 
@@ -1344,7 +1461,7 @@ static void SimplePeripheral_clockHandler(UArg arg)
 static void SimplePeripheral_connEvtCB(Gap_ConnEventRpt_t *pReport)
 {
   // Enqueue the event for processing in the app context.
-  if( SimplePeripheral_enqueueMsg(SBP_CONN_EVT, 0 ,(uint8_t *) pReport) == FALSE)
+  if( SimplePeripheral_enqueueMsg(SBP_CONN_EVT, 0 ,(uint8_t *) pReport, NULL) == FALSE)
   {
     ICall_free(pReport);
   }
@@ -1362,7 +1479,7 @@ static void SimplePeripheral_connEvtCB(Gap_ConnEventRpt_t *pReport)
  * @return  TRUE or FALSE
  */
 static uint8_t SimplePeripheral_enqueueMsg(uint8_t event, uint8_t state,
-                                           uint8_t *pData)
+                                           uint8_t *pData, uint16_t arg0)
 {
   sbpEvt_t *pMsg = ICall_malloc(sizeof(sbpEvt_t));
 
@@ -1372,6 +1489,7 @@ static uint8_t SimplePeripheral_enqueueMsg(uint8_t event, uint8_t state,
     pMsg->hdr.event = event;
     pMsg->hdr.state = state;
     pMsg->pData = pData;
+    pMsg->arg0  = arg0;
 
     // Enqueue the message.
     return Util_enqueueMsg(appMsgQueue, syncEvent, (uint8_t *)pMsg);
