@@ -77,5 +77,5 @@
 
 - 广播名称？
 - 广播间隔等其他时间参数？
-- service/characteristic UUID？（暂时基于simple peripheral 服务来修改）
+- service/characteristic UUID？（目前基于simple peripheral 服务的char1/char2来实现）
 - 通信方式，notify ？read？ or both？
