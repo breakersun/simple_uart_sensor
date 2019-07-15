@@ -175,6 +175,9 @@
 //  UART read buffer size
 #define UART_MAX_READ_SIZE    (256)
 
+#define BR_RATE_DATA_OFFSET       (14)
+#define HE_RATE_DATA_OFFSET       (13)
+
 /*********************************************************************
  * TYPEDEFS
  */
@@ -330,7 +333,8 @@ static uint8_t SimplePeripheral_enqueueMsg(uint8_t event, uint8_t state,
 
 static void SimplePeripheral_connEvtCB(Gap_ConnEventRpt_t *pReport);
 static void SimplePeripheral_processConnEvt(Gap_ConnEventRpt_t *pReport);
-
+static uint8 parse_br(uint8 *cmd, uint16 lenth, uint8 *breath);
+static uint8 parse_he(uint8 *cmd, uint16 lenth, uint8 *he);
 
 
 /*********************************************************************
@@ -530,7 +534,7 @@ static void SimplePeripheral_Hwinit(void)
       while (1);
     }
 
-    UART_control(uartHandle, UARTCC26XX_CMD_RETURN_PARTIAL_ENABLE, NULL);
+    UART_control(uartHandle, UARTCC26XX_CMD_RETURN_PARTIAL_DISABLE, NULL);
 
     // Setup an initial read
     UART_read(uartHandle, uartReadBuffer, UART_MAX_READ_SIZE);
@@ -1001,6 +1005,72 @@ static void SimplePeripheral_processConnEvt(Gap_ConnEventRpt_t *pReport)
 
 }
 
+static uint8 parse_br(uint8 *cmd,
+                           uint16 lenth,
+                           uint8 *breath)
+{
+    uint8 ret;
+
+    for (uint16 idx = 0; idx + BR_RATE_DATA_OFFSET + 3 < lenth; idx++)
+    {
+        if (cmd[idx] == 'B' && cmd[idx + 1] == 'r')
+        {
+            idx += BR_RATE_DATA_OFFSET;
+
+            uint8 data = 0;
+            (cmd[idx] != '.') ? (data = data * 10 + cmd[idx] - '0') : (*breath = data);
+            idx++;
+            (cmd[idx] != '.') ? (data = data * 10 + cmd[idx] - '0') : (*breath = data);
+            idx++;
+            (cmd[idx] != '.') ? (data = data * 10 + cmd[idx] - '0') : (*breath = data);
+            idx++;
+            (cmd[idx] != '.') ? (data = data * 10 + cmd[idx] - '0') : (*breath = data);
+            idx++;
+
+            ret = 1;
+            break;
+        }
+        else
+        {
+            ret = 0;
+        }
+    }
+
+    return ret;
+}
+
+static uint8 parse_he(uint8 *cmd, uint16 lenth, uint8 *heart)
+{
+    uint8 ret;
+
+    for (uint16 idx = 0; idx + HE_RATE_DATA_OFFSET + 3 < lenth; idx++)
+    {
+        if (cmd[idx] == 'H' && cmd[idx + 1] == 'e')
+        {
+            idx += HE_RATE_DATA_OFFSET;
+
+            uint8 data = 0;
+            (cmd[idx] != '.') ? (data = data * 10 + cmd[idx] - '0') : (*heart = data);
+            idx++;
+            (cmd[idx] != '.') ? (data = data * 10 + cmd[idx] - '0') : (*heart = data);
+            idx++;
+            (cmd[idx] != '.') ? (data = data * 10 + cmd[idx] - '0') : (*heart = data);
+            idx++;
+            (cmd[idx] != '.') ? (data = data * 10 + cmd[idx] - '0') : (*heart = data);
+            idx++;
+
+            ret = 1;
+            break;
+        }
+        else
+        {
+            ret = 0;
+        }
+    }
+
+    return ret;
+}
+
 /*********************************************************************
  * @fn      SimplePeripheral_processAppMsg
  *
@@ -1054,8 +1124,32 @@ static void SimplePeripheral_processAppMsg(sbpEvt_t *pMsg)
 	  }
 
 	case SSSS_OUTGOING_DATA:
-	    // Start another read
+	{
+	    static uint8 br = 0xff;
+	    static uint8 he = 0xff;
+	    uint8 cur_br, cur_he;
+	    if (parse_br(uartReadBuffer, pMsg->arg0, &cur_br))
+	    {
+	        if (cur_br != br)
+	        {
+	            SimpleProfile_SetParameter(SIMPLEPROFILE_CHAR1, sizeof(uint8_t),
+	                                         &cur_br);
+	            br = cur_br;
+	        }
+	    }
+
+        if (parse_he(uartReadBuffer, pMsg->arg0, &cur_he))
+        {
+            if (cur_he != he)
+            {
+                SimpleProfile_SetParameter(SIMPLEPROFILE_CHAR2, sizeof(uint8_t),
+                                             &cur_he);
+                he = cur_he;
+            }
+        }
+
 	    UART_read(uartHandle, uartReadBuffer, UART_MAX_READ_SIZE);
+	}
 	    break;
 
     default:
