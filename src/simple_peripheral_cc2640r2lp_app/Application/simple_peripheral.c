@@ -177,6 +177,7 @@
 
 #define BR_RATE_DATA_OFFSET       (14)
 #define HE_RATE_DATA_OFFSET       (13)
+#define AT_RATE_DATA_OFFSET_MAX       (6)
 
 /*********************************************************************
  * TYPEDEFS
@@ -335,6 +336,7 @@ static void SimplePeripheral_connEvtCB(Gap_ConnEventRpt_t *pReport);
 static void SimplePeripheral_processConnEvt(Gap_ConnEventRpt_t *pReport);
 static uint8 parse_br(uint8 *cmd, uint16 lenth, uint8 *breath);
 static uint8 parse_he(uint8 *cmd, uint16 lenth, uint8 *he);
+static uint8 at_parse(uint8 *cmd, uint16 lenth, uint8 *breath, uint8 *heart);
 
 
 /*********************************************************************
@@ -1071,6 +1073,51 @@ static uint8 parse_he(uint8 *cmd, uint16 lenth, uint8 *heart)
     return ret;
 }
 
+/*
+ * AT+BR=018
+ * AT+HE=048
+ * */
+static uint8 at_parse(uint8 *cmd, uint16 lenth, uint8 *breath, uint8 *heart)
+{
+    uint8 result_cnt = 0;
+    uint16 idx = 0;
+
+    for (; idx + AT_RATE_DATA_OFFSET_MAX < lenth; idx++)
+    {
+        if (cmd[idx] == 'B' && cmd[idx + 1] == 'R')
+        {
+            *breath = 0;
+
+            *breath += (cmd[idx + 3] - '0') * 100;
+            *breath += (cmd[idx + 4] - '0') * 10;
+            *breath += (cmd[idx + 5] - '0');
+
+            result_cnt++;
+            idx += 5;
+            break;
+        }
+    }
+
+    for ( ; idx + AT_RATE_DATA_OFFSET_MAX < lenth; idx++)
+    {
+        if (cmd[idx] == 'H' && cmd[idx + 1] == 'E')
+        {
+            *heart = 0;
+
+            *heart += (cmd[idx + 3] - '0') * 100;
+            *heart += (cmd[idx + 4] - '0') * 10;
+            *heart += (cmd[idx + 5] - '0');
+
+            result_cnt++;
+            break;
+        }
+    }
+
+    result_cnt = (result_cnt == 2) ?  1 : 0;
+
+    return result_cnt;
+}
+
 /*********************************************************************
  * @fn      SimplePeripheral_processAppMsg
  *
@@ -1128,18 +1175,35 @@ static void SimplePeripheral_processAppMsg(sbpEvt_t *pMsg)
 	    static uint8 br = 0xff;
 	    static uint8 he = 0xff;
 	    uint8 cur_br, cur_he;
-	    if (parse_br(uartReadBuffer, pMsg->arg0, &cur_br))
-	    {
-	        if (cur_br != br)
-	        {
-	            SimpleProfile_SetParameter(SIMPLEPROFILE_CHAR1, sizeof(uint8_t),
-	                                         &cur_br);
-	            br = cur_br;
-	        }
-	    }
+//	    if (parse_br(uartReadBuffer, pMsg->arg0, &cur_br))
+//	    {
+//	        if (cur_br != br)
+//	        {
+//	            SimpleProfile_SetParameter(SIMPLEPROFILE_CHAR1, sizeof(uint8_t),
+//	                                         &cur_br);
+//	            br = cur_br;
+//	        }
+//	    }
+//
+//        if (parse_he(uartReadBuffer, pMsg->arg0, &cur_he))
+//        {
+//            if (cur_he != he)
+//            {
+//                SimpleProfile_SetParameter(SIMPLEPROFILE_CHAR2, sizeof(uint8_t),
+//                                             &cur_he);
+//                he = cur_he;
+//            }
+//        }
 
-        if (parse_he(uartReadBuffer, pMsg->arg0, &cur_he))
+        if (at_parse(uartReadBuffer, pMsg->arg0, &cur_br, &cur_he))
         {
+            if (cur_br != br)
+            {
+                SimpleProfile_SetParameter(SIMPLEPROFILE_CHAR1, sizeof(uint8_t),
+                                             &cur_br);
+                br = cur_br;
+            }
+
             if (cur_he != he)
             {
                 SimpleProfile_SetParameter(SIMPLEPROFILE_CHAR2, sizeof(uint8_t),
