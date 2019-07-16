@@ -1081,10 +1081,12 @@ static uint8 at_parse(uint8 *cmd, uint16 lenth, uint8 *breath, uint8 *heart)
 {
     uint8 result_cnt = 0;
     uint16 idx = 0;
+    char *cmd_string;
 
     for (; idx + AT_RATE_DATA_OFFSET_MAX < lenth; idx++)
     {
-        if (cmd[idx] == 'B' && cmd[idx + 1] == 'R')
+        cmd_string = "BR";
+        if (!strncmp((char *)cmd + idx, cmd_string, 2))
         {
             *breath = 0;
 
@@ -1100,7 +1102,8 @@ static uint8 at_parse(uint8 *cmd, uint16 lenth, uint8 *breath, uint8 *heart)
 
     for ( ; idx + AT_RATE_DATA_OFFSET_MAX < lenth; idx++)
     {
-        if (cmd[idx] == 'H' && cmd[idx + 1] == 'E')
+        cmd_string = "HE";
+        if (!strncmp((char *)cmd + idx, cmd_string, 2))
         {
             *heart = 0;
 
@@ -1175,25 +1178,6 @@ static void SimplePeripheral_processAppMsg(sbpEvt_t *pMsg)
 	    static uint8 br = 0xff;
 	    static uint8 he = 0xff;
 	    uint8 cur_br, cur_he;
-//	    if (parse_br(uartReadBuffer, pMsg->arg0, &cur_br))
-//	    {
-//	        if (cur_br != br)
-//	        {
-//	            SimpleProfile_SetParameter(SIMPLEPROFILE_CHAR1, sizeof(uint8_t),
-//	                                         &cur_br);
-//	            br = cur_br;
-//	        }
-//	    }
-//
-//        if (parse_he(uartReadBuffer, pMsg->arg0, &cur_he))
-//        {
-//            if (cur_he != he)
-//            {
-//                SimpleProfile_SetParameter(SIMPLEPROFILE_CHAR2, sizeof(uint8_t),
-//                                             &cur_he);
-//                he = cur_he;
-//            }
-//        }
 
         if (at_parse(uartReadBuffer, pMsg->arg0, &cur_br, &cur_he))
         {
